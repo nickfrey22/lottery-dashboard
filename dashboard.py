@@ -1,6 +1,7 @@
 import time
 import re
 import os
+import json
 import smtplib
 import pytz
 import pandas as pd
@@ -17,12 +18,14 @@ from webdriver_manager.chrome import ChromeDriverManager
 SCRATCHERS_URL = "https://www.calottery.com/scratchers"
 DRAW_GAMES_URL = "https://www.calottery.com/draw-games"
 REFRESH_URL = "https://github.com/nickfrey22/lottery-dashboard/actions/workflows/daily_schedule.yml"
+CACHE_FILE = "lottery_cache.json"
+CACHE_HOURS = 4  # How many hours to keep data before scraping again
 
 # THRESHOLDS
-HOT_THRESHOLD = 15.0     # Highlight Green on dashboard
-EMAIL_THRESHOLD = 15.0   # Send email if Delta is >= this
+HOT_THRESHOLD = 3.0      
+EMAIL_THRESHOLD = 3.0    
 
-# Fixed Lower-Tier Payback Estimates (Draw Games)
+# Fixed Lower-Tier Payback Estimates
 FIXED_LOWER_TIER_PAYBACK = {
     "SuperLotto Plus": 0.20,
     "Fantasy 5": 0.40,
@@ -77,7 +80,38 @@ def setup_driver():
     options.add_argument("--window-size=1920,1080")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-# --- SCRATCHER LOGIC ---
+# --- CACHE LOGIC ---
+def load_cache():
+    if not os.path.exists(CACHE_FILE):
+        return None, None, None
+    
+    try:
+        with open(CACHE_FILE, 'r') as f:
+            data = json.load(f)
+            
+        timestamp = data.get('timestamp', 0)
+        # Check if cache is fresh
+        if (time.time() - timestamp) < (CACHE_HOURS * 3600):
+            print(f"✅ Loading data from cache ({datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')})")
+            return pd.DataFrame(data['scratchers']), pd.DataFrame(data['draw_games']), timestamp
+        else:
+            print("⚠️ Cache expired. Scraping new data...")
+            return None, None, None
+    except Exception as e:
+        print(f"Cache read error: {e}")
+        return None, None, None
+
+def save_cache(scratch_df, draw_df):
+    data = {
+        'timestamp': time.time(),
+        'scratchers': scratch_df.to_dict('records'),
+        'draw_games': draw_df.to_dict('records')
+    }
+    with open(CACHE_FILE, 'w') as f:
+        json.dump(data, f)
+    print("💾 Data cached successfully.")
+
+# --- SCRAPER FUNCTIONS ---
 def get_scratcher_data(driver):
     print("Scraping Scratchers...")
     driver.get(SCRATCHERS_URL)
@@ -109,11 +143,15 @@ def get_scratcher_data(driver):
             except: game_name = "Unknown"
             
             game_name = game_name.replace("Scratchers", "").strip()
-            
             body = driver.find_element(By.TAG_NAME, "body").text
+            
             price = 0
             if "Price: $" in body:
                 price = float(body.split("Price: $")[1].split()[0].strip())
+            
+            overall_odds = 0
+            odds_match = re.search(r"Overall odds\s*:\s*1\s*in\s*([\d\.]+)", body, re.IGNORECASE)
+            if odds_match: overall_odds = float(odds_match.group(1))
             
             rows = driver.find_elements(By.TAG_NAME, "tr")
             prizes = []
@@ -129,14 +167,11 @@ def get_scratcher_data(driver):
             
             if not prizes: continue
             
-            # 1. Base EV
             base_ev = 0
             for p in prizes:
-                if p['odds'] > 0:
-                    base_ev += p['val'] / p['odds']
+                if p['odds'] > 0: base_ev += p['val'] / p['odds']
             base_payback = (base_ev / price) * 100
 
-            # 2. Current EV
             valid_proxies = [p for p in prizes if p['orig'] > 0 and p['odds'] > 0]
             if not valid_proxies: continue
             proxy = sorted(valid_proxies, key=lambda x: x['odds'])[0]
@@ -151,7 +186,6 @@ def get_scratcher_data(driver):
                 curr_ev += (p['rem'] * p['val']) / rem_tickets
             
             curr_payback = (curr_ev / price) * 100
-            
             delta = curr_payback - base_payback
 
             sorted_prizes = sorted(prizes, key=lambda x: x['val'], reverse=True)
@@ -167,7 +201,8 @@ def get_scratcher_data(driver):
                 'CurPB': curr_payback,
                 'Delta': delta,
                 'Remain': remain_str,
-                'TopPrize': top_val_str
+                'TopPrize': top_val_str,
+                'OverallOdds': overall_odds
             })
             
         except Exception as e:
@@ -175,7 +210,6 @@ def get_scratcher_data(driver):
             
     return pd.DataFrame(game_data).sort_values('CurPB', ascending=False)
 
-# --- DRAW GAME LOGIC ---
 def get_draw_data(driver):
     print("Scraping Draw Games...")
     driver.get(DRAW_GAMES_URL)
@@ -191,7 +225,6 @@ def get_draw_data(driver):
     
     for i in range(len(indices) - 1):
         block = text[indices[i]-50 : indices[i+1]]
-        
         for name, cfg in DRAW_GAME_CONFIG.items():
             if name.upper() in text[indices[i]-50 : indices[i]].upper():
                 match = re.search(cfg['regex'], block)
@@ -221,7 +254,7 @@ def get_draw_data(driver):
     
     return pd.DataFrame(results).sort_values('CurPB', ascending=False)
 
-# --- EMAIL ALERT LOGIC ---
+# --- EMAIL ---
 def send_alert_email(hot_games):
     email_user = os.environ.get('EMAIL_USER')
     email_pass = os.environ.get('EMAIL_PASS')
@@ -235,7 +268,7 @@ def send_alert_email(hot_games):
     msg['To'] = email_user
     msg['Subject'] = f"🚨 LOTTERY ALERT: {len(hot_games)} Games Found!"
 
-    body = "The following games have a Delta of +15% or higher:\n\n"
+    body = "The following games have a Delta of +3.0% or higher:\n\n"
     for _, row in hot_games.iterrows():
         body += f"GAME: {row['Name']}\n"
         body += f"PRICE: ${row['Price']:.0f}\n"
@@ -257,12 +290,11 @@ def send_alert_email(hot_games):
         print(f"❌ Failed to send email: {e}")
 
 # --- HTML GENERATOR ---
-def generate_html(scratchers, draw_games):
-    # FIXED: Use pytz for timezone conversion
+def generate_html(scratchers, draw_games, timestamp):
     tz = pytz.timezone('America/Los_Angeles')
-    time_str = datetime.now(tz).strftime('%m/%d %I:%M %p')
+    dt_object = datetime.fromtimestamp(timestamp, tz)
+    time_str = dt_object.strftime('%m/%d %I:%M %p')
 
-    # HTML TEMPLATE
     html_template = """
     <!DOCTYPE html>
     <html>
@@ -307,6 +339,20 @@ def generate_html(scratchers, draw_games):
                 DRAW_ROWS_PLACEHOLDER
             </table>
         </div>
+        
+        <div class="card">
+            <h2>🔄 Best Churn Games (Low Risk)</h2>
+            <p style="text-align:center; font-size: 0.8em; color: #666;">Games under $10 sorted by Best Odds to win ANY prize.</p>
+            <table>
+                <tr>
+                    <th style="text-align:left">Game</th>
+                    <th>$</th>
+                    <th>Odds<br>(1 in)</th>
+                    <th>Cur.<br>PB%</th>
+                </tr>
+                CHURN_ROWS_PLACEHOLDER
+            </table>
+        </div>
 
         <div class="card">
             <h2>🔥 Scratchers</h2>
@@ -327,18 +373,21 @@ def generate_html(scratchers, draw_games):
     </html>
     """
     
-    # Draw Game Rows
     draw_rows = ""
     for _, r in draw_games.iterrows():
         draw_rows += f"<tr><td style='text-align:left'>{r['Name']}</td><td>${format_short_money(r['Jackpot'])}</td><td>{r['BasePB']:.0f}%</td><td class='hot-val'>{r['CurPB']:.0f}%</td></tr>"
 
-    # Scratcher Rows
+    churn_df = scratchers[scratchers['Price'] <= 10].sort_values('OverallOdds', ascending=True).head(5)
+    churn_rows = ""
+    for _, r in churn_df.iterrows():
+        churn_rows += f"<tr><td style='text-align:left'>{r['Name']}</td><td>${int(r['Price'])}</td><td>{r['OverallOdds']:.2f}</td><td>{r['CurPB']:.0f}%</td></tr>"
+
     scratcher_rows = generate_scratcher_rows(scratchers)
 
-    # Inject Data
     final_html = html_template.replace("TIME_PLACEHOLDER", time_str)
     final_html = final_html.replace("REFRESH_URL_PLACEHOLDER", REFRESH_URL)
     final_html = final_html.replace("DRAW_ROWS_PLACEHOLDER", draw_rows)
+    final_html = final_html.replace("CHURN_ROWS_PLACEHOLDER", churn_rows)
     final_html = final_html.replace("SCRATCHER_ROWS_PLACEHOLDER", scratcher_rows)
 
     with open("index.html", "w", encoding='utf-8') as f:
@@ -366,37 +415,34 @@ def generate_scratcher_rows(df):
     return rows
 
 def main():
-    driver = setup_driver()
-    try:
-        draw_df = get_draw_data(driver)
-        scratch_df = get_scratcher_data(driver)
-        generate_html(scratch_df, draw_df)
-        print("Dashboard generated.")
-        
-        # --- NEW "JACKPOT HUNTER" CRITERIA ---
-        # 1. Delta must be +3.0 or higher (Statistically significant)
-        # 2. Price must be $20 or higher (Big Prize Potential)
-        # 3. Must have at least 1 Jackpot remaining (Don't email dead games)
-        
-        # Helper to extract rem count from "1/5" string
-        def get_rem_count(s):
-            try: return int(s.split('/')[0])
-            except: return 0
-
+    # 1. Try to load cache
+    scratch_df, draw_df, timestamp = load_cache()
+    
+    # 2. If no cache, scrape
+    if scratch_df is None:
+        driver = setup_driver()
+        try:
+            draw_df = get_draw_data(driver)
+            scratch_df = get_scratcher_data(driver)
+            save_cache(scratch_df, draw_df)
+            timestamp = time.time()
+        finally:
+            driver.quit()
+    
+    # 3. Generate HTML
+    generate_html(scratch_df, draw_df, timestamp)
+    print("Dashboard generated.")
+    
+    # 4. Email Alert (Only if fresh scrape)
+    if scratch_df is not None:
         hot_games = scratch_df[
-            (scratch_df['Delta'] >= 3.0) & 
-            (scratch_df['Price'] >= 20.0) &
-            (scratch_df['Remain'].apply(get_rem_count) > 0)
+            (scratch_df['Delta'] >= EMAIL_THRESHOLD) & 
+            (scratch_df['Price'] >= 20.0)
         ]
         
         if not hot_games.empty:
-            print(f"Found {len(hot_games)} PRO games. Sending email...")
+            print(f"Found {len(hot_games)} hot games. Sending email...")
             send_alert_email(hot_games)
-        else:
-            print("No games met the 'Jackpot Hunter' criteria. No email sent.")
-
-    finally:
-        driver.quit()
 
 if __name__ == "__main__":
     main()
