@@ -1,8 +1,12 @@
 import time
 import re
+import os
+import smtplib
+import pytz
 import pandas as pd
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -14,8 +18,9 @@ SCRATCHERS_URL = "https://www.calottery.com/scratchers"
 DRAW_GAMES_URL = "https://www.calottery.com/draw-games"
 REFRESH_URL = "https://github.com/nickfrey22/lottery-dashboard/actions/workflows/daily_schedule.yml"
 
-# Highlight Threshold
-HOT_THRESHOLD = 3.0 
+# THRESHOLDS
+HOT_THRESHOLD = 15.0     # Highlight Green on dashboard
+EMAIL_THRESHOLD = 15.0   # Send email if Delta is >= this
 
 # Fixed Lower-Tier Payback Estimates (Draw Games)
 FIXED_LOWER_TIER_PAYBACK = {
@@ -25,7 +30,7 @@ FIXED_LOWER_TIER_PAYBACK = {
     "Mega Millions": 0.45 
 }
 
-# Estimated Starting CASH Jackpots (for Baseline Calculation)
+# Estimated Starting CASH Jackpots
 STARTING_JACKPOTS = {
     "Powerball": 10_000_000,      
     "Mega Millions": 10_000_000,  
@@ -56,15 +61,12 @@ def parse_remaining(val):
     return 0, 0
 
 def format_short_money(val):
-    """Formats 10000000 to 10m, 750000 to 750k"""
     if val >= 1_000_000:
         s = val / 1_000_000
-        if s.is_integer(): return f"{int(s)}m"
-        return f"{s:.1f}m"
+        return f"{int(s)}m" if s.is_integer() else f"{s:.1f}m"
     elif val >= 1_000:
         s = val / 1_000
-        if s.is_integer(): return f"{int(s)}k"
-        return f"{s:.0f}k"
+        return f"{int(s)}k" if s.is_integer() else f"{s:.0f}k"
     return str(int(val))
 
 def setup_driver():
@@ -219,12 +221,48 @@ def get_draw_data(driver):
     
     return pd.DataFrame(results).sort_values('CurPB', ascending=False)
 
+# --- EMAIL ALERT LOGIC ---
+def send_alert_email(hot_games):
+    email_user = os.environ.get('EMAIL_USER')
+    email_pass = os.environ.get('EMAIL_PASS')
+    
+    if not email_user or not email_pass:
+        print("Skipping email: No credentials found.")
+        return
+
+    msg = MIMEMultipart()
+    msg['From'] = email_user
+    msg['To'] = email_user
+    msg['Subject'] = f"🚨 LOTTERY ALERT: {len(hot_games)} Games Found!"
+
+    body = "The following games have a Delta of +15% or higher:\n\n"
+    for _, row in hot_games.iterrows():
+        body += f"GAME: {row['Name']}\n"
+        body += f"PRICE: ${row['Price']:.0f}\n"
+        body += f"PAYBACK: {row['CurPB']:.1f}% (Delta: +{row['Delta']:.1f}%)\n"
+        body += f"TOP PRIZE: {row['TopPrize']} ({row['Remain']} left)\n"
+        body += "-" * 30 + "\n"
+    
+    body += f"\nCheck Dashboard: https://nickfrey22.github.io/lottery-dashboard/"
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(email_user, email_pass)
+        server.send_message(msg)
+        server.quit()
+        print("✅ Alert email sent successfully.")
+    except Exception as e:
+        print(f"❌ Failed to send email: {e}")
+
 # --- HTML GENERATOR ---
 def generate_html(scratchers, draw_games):
     ca_time = datetime.now(ZoneInfo("America/Los_Angeles"))
     time_str = ca_time.strftime('%m/%d %I:%M %p')
 
-    html = f"""
+    # HTML TEMPLATE (Using normal string to avoid brace errors)
+    html_template = """
     <!DOCTYPE html>
     <html>
     <head>
@@ -232,4 +270,117 @@ def generate_html(scratchers, draw_games):
         <meta name="robots" content="noindex, nofollow">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {{ font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 10px
+            body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 10px; background: #f4f4f9; }
+            h1 { text-align: center; color: #333; font-size: 1.5em; }
+            .btn-refresh { 
+                display: block; width: 200px; margin: 0 auto 20px auto; 
+                padding: 10px; background-color: #007bff; color: white; 
+                text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;
+            }
+            .card { background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; overflow-x: auto; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            th, td { padding: 6px 2px; text-align: center; border-bottom: 1px solid #ddd; }
+            td:first-child { text-align: left; } 
+            th:not(:first-child), td:not(:first-child) { width: 1%; white-space: nowrap; }
+            th { background-color: #007bff; color: white; vertical-align: bottom; font-size: 11px; }
+            tr:nth-child(even) { background-color: #f9f9f9; }
+            .hot-row { background-color: #e6fffa !important; }
+            .hot-val { color: green; font-weight: bold; }
+            .timestamp { text-align: center; color: #666; font-size: 0.8em; margin-bottom: 20px; }
+        </style>
+    </head>
+    <body>
+        <h1>🎱 Nick's Lottery Tracker</h1>
+        <p class="timestamp">Updated: TIME_PLACEHOLDER PST</p>
+        <a href="REFRESH_URL_PLACEHOLDER" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
+
+        <div class="card">
+            <h2>🏆 Draw Games</h2>
+            <table>
+                <tr>
+                    <th style="text-align:left">Game</th>
+                    <th>Jackpot<br>(Cash)</th>
+                    <th>Base<br>PB%</th>
+                    <th>Cur.<br>PB%</th>
+                </tr>
+                DRAW_ROWS_PLACEHOLDER
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>🔥 Scratchers</h2>
+            <table>
+                <tr>
+                    <th style="text-align:left">Game</th>
+                    <th>$</th>
+                    <th>Top</th>
+                    <th>Rem.</th>
+                    <th>Base<br>PB%</th>
+                    <th>Cur.<br>PB%</th>
+                    <th>Delta</th>
+                </tr>
+                SCRATCHER_ROWS_PLACEHOLDER
+            </table>
+        </div>
+    </body>
+    </html>
+    """
+    
+    # Draw Game Rows
+    draw_rows = ""
+    for _, r in draw_games.iterrows():
+        draw_rows += f"<tr><td style='text-align:left'>{r['Name']}</td><td>${format_short_money(r['Jackpot'])}</td><td>{r['BasePB']:.0f}%</td><td class='hot-val'>{r['CurPB']:.0f}%</td></tr>"
+
+    # Scratcher Rows
+    scratcher_rows = generate_scratcher_rows(scratchers)
+
+    # Inject Data
+    final_html = html_template.replace("TIME_PLACEHOLDER", time_str)
+    final_html = final_html.replace("REFRESH_URL_PLACEHOLDER", REFRESH_URL)
+    final_html = final_html.replace("DRAW_ROWS_PLACEHOLDER", draw_rows)
+    final_html = final_html.replace("SCRATCHER_ROWS_PLACEHOLDER", scratcher_rows)
+
+    with open("index.html", "w", encoding='utf-8') as f:
+        f.write(final_html)
+
+def generate_scratcher_rows(df):
+    rows = ""
+    for _, r in df.head(20).iterrows():
+        is_hot = r['Delta'] >= HOT_THRESHOLD
+        row_class = "class='hot-row'" if is_hot else ""
+        delta_color = "green" if r['Delta'] > 0 else "red"
+        delta_str = f"{r['Delta']:+.1f}"
+        
+        rows += f"""
+        <tr {row_class}>
+            <td style='text-align:left; max-width: 120px;'>{r['Name']}</td>
+            <td>{int(r['Price'])}</td>
+            <td>{r['TopPrize']}</td>
+            <td>{r['Remain']}</td>
+            <td>{r['BasePB']:.1f}%</td>
+            <td>{r['CurPB']:.1f}%</td>
+            <td style='color:{delta_color}; font-weight:bold;'>{delta_str}</td>
+        </tr>
+        """
+    return rows
+
+def main():
+    driver = setup_driver()
+    try:
+        draw_df = get_draw_data(driver)
+        scratch_df = get_scratcher_data(driver)
+        generate_html(scratch_df, draw_df)
+        print("Dashboard generated.")
+        
+        hot_games = scratch_df[scratch_df['Delta'] >= EMAIL_THRESHOLD]
+        if not hot_games.empty:
+            print(f"Found {len(hot_games)} hot games. Sending email...")
+            send_alert_email(hot_games)
+        else:
+            print("No games met the threshold. No email sent.")
+
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    main()
