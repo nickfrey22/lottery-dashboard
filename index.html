@@ -5,25 +5,33 @@
         <title>Lottery Dashboard</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f4f9; }
+            body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f4f4f9; }
             h1 { text-align: center; color: #333; }
+            .btn-refresh { 
+                display: block; width: 200px; margin: 0 auto 20px auto; 
+                padding: 10px; background-color: #007bff; color: white; 
+                text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;
+            }
+            .btn-refresh:hover { background-color: #0056b3; }
             .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-            table { width: 100%; border-collapse: collapse; }
+            table { width: 100%; border-collapse: collapse; font-size: 14px; }
             th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
             th { background-color: #007bff; color: white; }
             tr:nth-child(even) { background-color: #f9f9f9; }
             .hot { color: green; font-weight: bold; }
-            .timestamp { text-align: center; color: #666; font-size: 0.8em; }
+            .timestamp { text-align: center; color: #666; font-size: 0.8em; margin-bottom: 20px; }
         </style>
     </head>
     <body>
         <h1>🎱 Nick's Lottery Tracker</h1>
-        <p class="timestamp">Last Updated: 2025-11-28 12:52 AM</p>
+        <p class="timestamp">Last Updated: 2025-11-28 01:04 AM PST</p>
         
+        <a href="https://github.com/nickfrey22/lottery-dashboard/actions/workflows/daily_schedule.yml" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
+
         <div class="card">
             <h2>🏆 Best Draw Games</h2>
             <table>
-                <tr><th>Game</th><th>Jackpot</th><th>Payback %</th></tr>
+                <tr><th>Game</th><th>Jackpot (Cash)</th><th>Payback %</th></tr>
                 <tr><td>Powerball</td><td>$333,300,000</td><td class='hot'>75.0%</td></tr><tr><td>Fantasy 5</td><td>$70,000</td><td class='hot'>52.2%</td></tr><tr><td>Mega Millions</td><td>$36,900,000</td><td class='hot'>47.5%</td></tr><tr><td>SuperLotto Plus</td><td>$5,600,000</td><td class='hot'>33.5%</td></tr>
             </table>
         </div>
@@ -31,8 +39,8 @@
         <div class="card">
             <h2>🔥 Top 10 Hot Scratchers</h2>
             <table>
-                <tr><th>Game</th><th>Price</th><th>Payback %</th></tr>
-                <tr><td>200X (1638)</td><td>$30</td><td class='hot'>101.2%</td></tr><tr><td>CROSSWORD XTREME (1673)</td><td>$30</td><td class='hot'>84.8%</td></tr><tr><td>7'S (1692)</td><td>$30</td><td class='hot'>83.7%</td></tr><tr><td>DOUBLE THE LUCK (1672)</td><td>$20</td><td class='hot'>81.5%</td></tr><tr><td>LOS ANGELES CHARGERS (1691)</td><td>$10</td><td class='hot'>80.0%</td></tr><tr><td>MONOPOLY (1669)</td><td>$20</td><td class='hot'>79.6%</td></tr><tr><td>SHOW ME $5,000,000! (1678)</td><td>$20</td><td class='hot'>79.3%</td></tr><tr><td>SET FOR LIFE (1705)</td><td>$20</td><td class='hot'>78.9%</td></tr><tr><td>JOKER'S WILD POKER (1668)</td><td>$10</td><td class='hot'>78.6%</td></tr><tr><td>SUNNY MONEY (1677)</td><td>$10</td><td class='hot'>77.4%</td></tr>
+                <tr><th>Game</th><th>Price</th><th>Top Prize</th><th>Jackpots Left</th><th>Payback %</th></tr>
+                <tr><td>200X (1638)</td><td>$30</td><td>$10,000,000</td><td>1 of 5</td><td class='hot'>101.2%</td></tr><tr><td>CROSSWORD XTREME (1673)</td><td>$30</td><td>$7,000,000</td><td>2 of 3</td><td class='hot'>84.8%</td></tr><tr><td>7'S (1692)</td><td>$30</td><td>$10,000,000</td><td>5 of 5</td><td class='hot'>83.7%</td></tr><tr><td>DOUBLE THE LUCK (1672)</td><td>$20</td><td>$5,000,000</td><td>2 of 4</td><td class='hot'>81.5%</td></tr><tr><td>LOS ANGELES CHARGERS (1691)</td><td>$10</td><td>$1,000,000</td><td>5 of 5</td><td class='hot'>80.0%</td></tr><tr><td>MONOPOLY (1669)</td><td>$20</td><td>$5,000,000</td><td>4 of 6</td><td class='hot'>79.6%</td></tr><tr><td>SHOW ME $5,000,000! (1678)</td><td>$20</td><td>$5,000,000</td><td>3 of 5</td><td class='hot'>79.3%</td></tr><tr><td>SET FOR LIFE (1705)</td><td>$20</td><td>$5,000,000</td><td>6 of 6</td><td class='hot'>78.9%</td></tr><tr><td>JOKER'S WILD POKER (1668)</td><td>$10</td><td>$750,000</td><td>3 of 14</td><td class='hot'>78.6%</td></tr><tr><td>SUNNY MONEY (1677)</td><td>$10</td><td>$1,000,000</td><td>3 of 5</td><td class='hot'>77.4%</td></tr>
             </table>
         </div>
     </body>
