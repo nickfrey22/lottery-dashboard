@@ -258,10 +258,11 @@ def send_alert_email(hot_games):
 
 # --- HTML GENERATOR ---
 def generate_html(scratchers, draw_games):
-    ca_time = datetime.now(ZoneInfo("America/Los_Angeles"))
-    time_str = ca_time.strftime('%m/%d %I:%M %p')
+    # FIXED: Use pytz for timezone conversion
+    tz = pytz.timezone('America/Los_Angeles')
+    time_str = datetime.now(tz).strftime('%m/%d %I:%M %p')
 
-    # HTML TEMPLATE (Using normal string to avoid brace errors)
+    # HTML TEMPLATE
     html_template = """
     <!DOCTYPE html>
     <html>
