@@ -373,12 +373,27 @@ def main():
         generate_html(scratch_df, draw_df)
         print("Dashboard generated.")
         
-        hot_games = scratch_df[scratch_df['Delta'] >= EMAIL_THRESHOLD]
+        # --- NEW "JACKPOT HUNTER" CRITERIA ---
+        # 1. Delta must be +3.0 or higher (Statistically significant)
+        # 2. Price must be $20 or higher (Big Prize Potential)
+        # 3. Must have at least 1 Jackpot remaining (Don't email dead games)
+        
+        # Helper to extract rem count from "1/5" string
+        def get_rem_count(s):
+            try: return int(s.split('/')[0])
+            except: return 0
+
+        hot_games = scratch_df[
+            (scratch_df['Delta'] >= 3.0) & 
+            (scratch_df['Price'] >= 20.0) &
+            (scratch_df['Remain'].apply(get_rem_count) > 0)
+        ]
+        
         if not hot_games.empty:
-            print(f"Found {len(hot_games)} hot games. Sending email...")
+            print(f"Found {len(hot_games)} PRO games. Sending email...")
             send_alert_email(hot_games)
         else:
-            print("No games met the threshold. No email sent.")
+            print("No games met the 'Jackpot Hunter' criteria. No email sent.")
 
     finally:
         driver.quit()
