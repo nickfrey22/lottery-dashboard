@@ -14,23 +14,20 @@
                 text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;
             }
             .card { background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; overflow-x: auto; }
-            
-            table { width: 100%; border-collapse: collapse; font-size: 13px; }
-            th, td { padding: 6px 4px; text-align: center; border-bottom: 1px solid #ddd; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            th, td { padding: 6px 2px; text-align: center; border-bottom: 1px solid #ddd; }
             td:first-child { text-align: left; } 
-            
-            th { background-color: #007bff; color: white; vertical-align: bottom; font-size: 12px; }
+            th:not(:first-child), td:not(:first-child) { width: 1%; white-space: nowrap; }
+            th { background-color: #007bff; color: white; vertical-align: bottom; font-size: 11px; }
             tr:nth-child(even) { background-color: #f9f9f9; }
-            
             .hot-row { background-color: #e6fffa !important; }
             .hot-val { color: green; font-weight: bold; }
             .timestamp { text-align: center; color: #666; font-size: 0.8em; margin-bottom: 20px; }
         </style>
     </head>
     <body>
-        <h1>🎱 Lottery Tracker</h1>
-        <p class="timestamp">Updated: 11/28 01:31 AM</p>
-        
+        <h1>🎱 Nick's Lottery Tracker</h1>
+        <p class="timestamp">Updated: 11/27 06:13 PM PST</p>
         <a href="https://github.com/nickfrey22/lottery-dashboard/actions/workflows/daily_schedule.yml" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
 
         <div class="card">
@@ -69,7 +66,7 @@
             <td style='color:green; font-weight:bold;'>+21.7</td>
         </tr>
         
-        <tr class='hot-row'>
+        <tr >
             <td style='text-align:left; max-width: 120px;'>CROSSWORD XTREME (1673)</td>
             <td>30</td>
             <td>7m</td>
@@ -79,7 +76,7 @@
             <td style='color:green; font-weight:bold;'>+4.8</td>
         </tr>
         
-        <tr class='hot-row'>
+        <tr >
             <td style='text-align:left; max-width: 120px;'>7'S (1692)</td>
             <td>30</td>
             <td>10m</td>
@@ -99,7 +96,7 @@
             <td style='color:green; font-weight:bold;'>+1.6</td>
         </tr>
         
-        <tr class='hot-row'>
+        <tr >
             <td style='text-align:left; max-width: 120px;'>LOS ANGELES CHARGERS (1691)</td>
             <td>10</td>
             <td>1m</td>
@@ -149,7 +146,7 @@
             <td style='color:green; font-weight:bold;'>+0.1</td>
         </tr>
         
-        <tr class='hot-row'>
+        <tr >
             <td style='text-align:left; max-width: 120px;'>SUNNY MONEY (1677)</td>
             <td>10</td>
             <td>1m</td>
