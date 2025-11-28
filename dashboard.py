@@ -2,6 +2,7 @@ import time
 import re
 import pandas as pd
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -220,6 +221,9 @@ def get_draw_data(driver):
 
 # --- HTML GENERATOR ---
 def generate_html(scratchers, draw_games):
+    ca_time = datetime.now(ZoneInfo("America/Los_Angeles"))
+    time_str = ca_time.strftime('%m/%d %I:%M %p')
+
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -228,97 +232,4 @@ def generate_html(scratchers, draw_games):
         <meta name="robots" content="noindex, nofollow">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {{ font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 10px; background: #f4f4f9; }}
-            h1 {{ text-align: center; color: #333; font-size: 1.5em; }}
-            .btn-refresh {{ 
-                display: block; width: 200px; margin: 0 auto 20px auto; 
-                padding: 10px; background-color: #007bff; color: white; 
-                text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;
-            }}
-            .card {{ background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; overflow-x: auto; }}
-            
-            table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-            th, td {{ padding: 6px 4px; text-align: center; border-bottom: 1px solid #ddd; }}
-            td:first-child {{ text-align: left; }} 
-            
-            th {{ background-color: #007bff; color: white; vertical-align: bottom; font-size: 12px; }}
-            tr:nth-child(even) {{ background-color: #f9f9f9; }}
-            
-            .hot-row {{ background-color: #e6fffa !important; }}
-            .hot-val {{ color: green; font-weight: bold; }}
-            .timestamp {{ text-align: center; color: #666; font-size: 0.8em; margin-bottom: 20px; }}
-        </style>
-    </head>
-    <body>
-        <h1>🎱 Lottery Tracker</h1>
-        <p class="timestamp">Updated: {datetime.now().strftime('%m/%d %I:%M %p')}</p>
-        
-        <a href="{REFRESH_URL}" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
-
-        <div class="card">
-            <h2>🏆 Draw Games</h2>
-            <table>
-                <tr>
-                    <th style="text-align:left">Game</th>
-                    <th>Jackpot<br>(Cash)</th>
-                    <th>Base<br>PB%</th>
-                    <th>Cur.<br>PB%</th>
-                </tr>
-                {''.join(f"<tr><td style='text-align:left'>{r['Name']}</td><td>${format_short_money(r['Jackpot'])}</td><td>{r['BasePB']:.0f}%</td><td class='hot-val'>{r['CurPB']:.0f}%</td></tr>" for _, r in draw_games.iterrows())}
-            </table>
-        </div>
-
-        <div class="card">
-            <h2>🔥 Scratchers</h2>
-            <table>
-                <tr>
-                    <th style="text-align:left">Game</th>
-                    <th>$</th>
-                    <th>Top</th>
-                    <th>Rem.</th>
-                    <th>Base<br>PB%</th>
-                    <th>Cur.<br>PB%</th>
-                    <th>Delta</th>
-                </tr>
-                {generate_scratcher_rows(scratchers)}
-            </table>
-        </div>
-    </body>
-    </html>
-    """
-    with open("index.html", "w", encoding='utf-8') as f:
-        f.write(html)
-
-def generate_scratcher_rows(df):
-    rows = ""
-    for _, r in df.head(20).iterrows():
-        is_hot = r['Delta'] >= HOT_THRESHOLD
-        row_class = "class='hot-row'" if is_hot else ""
-        delta_color = "green" if r['Delta'] > 0 else "red"
-        delta_str = f"{r['Delta']:+.1f}"
-        
-        rows += f"""
-        <tr {row_class}>
-            <td style='text-align:left; max-width: 120px;'>{r['Name']}</td>
-            <td>{int(r['Price'])}</td>
-            <td>{r['TopPrize']}</td>
-            <td>{r['Remain']}</td>
-            <td>{r['BasePB']:.1f}%</td>
-            <td>{r['CurPB']:.1f}%</td>
-            <td style='color:{delta_color}; font-weight:bold;'>{delta_str}</td>
-        </tr>
-        """
-    return rows
-
-def main():
-    driver = setup_driver()
-    try:
-        draw_df = get_draw_data(driver)
-        scratch_df = get_scratcher_data(driver)
-        generate_html(scratch_df, draw_df)
-        print("Dashboard generated successfully.")
-    finally:
-        driver.quit()
-
-if __name__ == "__main__":
-    main()
+            body {{ font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 10px
