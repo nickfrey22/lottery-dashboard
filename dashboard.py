@@ -12,6 +12,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 SCRATCHERS_URL = "https://www.calottery.com/scratchers"
 DRAW_GAMES_URL = "https://www.calottery.com/draw-games"
 
+# YOUR GITHUB ACTIONS LINK (Safe to expose)
+REFRESH_URL = "https://github.com/nickfrey22/lottery-dashboard/actions/workflows/daily_schedule.yml"
+
 # Fixed Lower-Tier Payback Estimates (Draw Games)
 FIXED_LOWER_TIER_PAYBACK = {
     "SuperLotto Plus": 0.20,
@@ -117,7 +120,6 @@ def get_scratcher_data(driver):
             payback = (curr_ev / price) * 100
 
             # 2. Get Top Prize Stats
-            # Sort descending by value to find the Jackpot
             sorted_prizes = sorted(prizes, key=lambda x: x['val'], reverse=True)
             top_prize = sorted_prizes[0]
             top_prize_str = f"{int(top_prize['rem'])} of {int(top_prize['orig'])}"
@@ -183,19 +185,27 @@ def generate_html(scratchers, draw_games):
         <style>
             body {{ font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f4f4f9; }}
             h1 {{ text-align: center; color: #333; }}
+            .btn-refresh {{ 
+                display: block; width: 200px; margin: 0 auto 20px auto; 
+                padding: 10px; background-color: #007bff; color: white; 
+                text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;
+            }}
+            .btn-refresh:hover {{ background-color: #0056b3; }}
             .card {{ background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }}
             table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
             th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }}
             th {{ background-color: #007bff; color: white; }}
             tr:nth-child(even) {{ background-color: #f9f9f9; }}
             .hot {{ color: green; font-weight: bold; }}
-            .timestamp {{ text-align: center; color: #666; font-size: 0.8em; }}
+            .timestamp {{ text-align: center; color: #666; font-size: 0.8em; margin-bottom: 20px; }}
         </style>
     </head>
     <body>
         <h1>🎱 Nick's Lottery Tracker</h1>
-        <p class="timestamp">Last Updated: {datetime.now().strftime('%Y-%m-%d %I:%M %p')}</p>
+        <p class="timestamp">Last Updated: {datetime.now().strftime('%Y-%m-%d %I:%M %p PST')}</p>
         
+        <a href="{REFRESH_URL}" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
+
         <div class="card">
             <h2>🏆 Best Draw Games</h2>
             <table>
