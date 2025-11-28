@@ -11,9 +11,10 @@ from webdriver_manager.chrome import ChromeDriverManager
 # --- SETTINGS ---
 SCRATCHERS_URL = "https://www.calottery.com/scratchers"
 DRAW_GAMES_URL = "https://www.calottery.com/draw-games"
-
-# YOUR GITHUB ACTIONS LINK (Safe to expose)
 REFRESH_URL = "https://github.com/nickfrey22/lottery-dashboard/actions/workflows/daily_schedule.yml"
+
+# Highlight Threshold
+HOT_THRESHOLD = 3.0 
 
 # Fixed Lower-Tier Payback Estimates (Draw Games)
 FIXED_LOWER_TIER_PAYBACK = {
@@ -21,6 +22,14 @@ FIXED_LOWER_TIER_PAYBACK = {
     "Fantasy 5": 0.40,
     "Powerball": 0.18,
     "Mega Millions": 0.45 
+}
+
+# Estimated Starting CASH Jackpots (for Baseline Calculation)
+STARTING_JACKPOTS = {
+    "Powerball": 10_000_000,      
+    "Mega Millions": 10_000_000,  
+    "SuperLotto Plus": 3_500_000, 
+    "Fantasy 5": 60_000           
 }
 
 DRAW_GAME_CONFIG = {
@@ -45,6 +54,18 @@ def parse_remaining(val):
         except: return 0, 0
     return 0, 0
 
+def format_short_money(val):
+    """Formats 10000000 to 10m, 750000 to 750k"""
+    if val >= 1_000_000:
+        s = val / 1_000_000
+        if s.is_integer(): return f"{int(s)}m"
+        return f"{s:.1f}m"
+    elif val >= 1_000:
+        s = val / 1_000
+        if s.is_integer(): return f"{int(s)}k"
+        return f"{s:.0f}k"
+    return str(int(val))
+
 def setup_driver():
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")
@@ -55,7 +76,7 @@ def setup_driver():
 
 # --- SCRATCHER LOGIC ---
 def get_scratcher_data(driver):
-    print("Scraping Scratchers (This takes a few minutes)...")
+    print("Scraping Scratchers...")
     driver.get(SCRATCHERS_URL)
     time.sleep(3)
     
@@ -63,7 +84,7 @@ def get_scratcher_data(driver):
         tab = driver.find_element(By.XPATH, "//*[contains(text(), 'Top Prizes Remaining')]")
         tab.click()
         time.sleep(3)
-    except: print("Could not click tab, trying to proceed...")
+    except: pass
 
     links = set()
     elements = driver.find_elements(By.TAG_NAME, "a")
@@ -84,6 +105,8 @@ def get_scratcher_data(driver):
             try: game_name = driver.find_element(By.TAG_NAME, "h1").text.strip()
             except: game_name = "Unknown"
             
+            game_name = game_name.replace("Scratchers", "").strip()
+            
             body = driver.find_element(By.TAG_NAME, "body").text
             price = 0
             if "Price: $" in body:
@@ -103,7 +126,14 @@ def get_scratcher_data(driver):
             
             if not prizes: continue
             
-            # 1. EV Calc
+            # 1. Base EV
+            base_ev = 0
+            for p in prizes:
+                if p['odds'] > 0:
+                    base_ev += p['val'] / p['odds']
+            base_payback = (base_ev / price) * 100
+
+            # 2. Current EV
             valid_proxies = [p for p in prizes if p['orig'] > 0 and p['odds'] > 0]
             if not valid_proxies: continue
             proxy = sorted(valid_proxies, key=lambda x: x['odds'])[0]
@@ -117,27 +147,30 @@ def get_scratcher_data(driver):
             for p in prizes:
                 curr_ev += (p['rem'] * p['val']) / rem_tickets
             
-            payback = (curr_ev / price) * 100
+            curr_payback = (curr_ev / price) * 100
+            
+            delta = curr_payback - base_payback
 
-            # 2. Get Top Prize Stats
             sorted_prizes = sorted(prizes, key=lambda x: x['val'], reverse=True)
             top_prize = sorted_prizes[0]
-            top_prize_str = f"{int(top_prize['rem'])} of {int(top_prize['orig'])}"
-            top_prize_val = f"${top_prize['val']:,.0f}"
+            
+            remain_str = f"{int(top_prize['rem'])}/{int(top_prize['orig'])}"
+            top_val_str = format_short_money(top_prize['val'])
             
             game_data.append({
                 'Name': f"{game_name} ({game_id})",
                 'Price': price,
-                'EV': curr_ev,
-                'Payback': payback,
-                'JackpotStatus': top_prize_str,
-                'TopPrize': top_prize_val
+                'BasePB': base_payback,
+                'CurPB': curr_payback,
+                'Delta': delta,
+                'Remain': remain_str,
+                'TopPrize': top_val_str
             })
             
         except Exception as e:
             continue
             
-    return pd.DataFrame(game_data).sort_values('Payback', ascending=False)
+    return pd.DataFrame(game_data).sort_values('CurPB', ascending=False)
 
 # --- DRAW GAME LOGIC ---
 def get_draw_data(driver):
@@ -168,11 +201,22 @@ def get_draw_data(driver):
                     else: jackpot = 0
                 
                 if jackpot > 1000:
-                    ev = (jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
-                    payback = (ev / cfg['price']) * 100
-                    results.append({'Name': name, 'Jackpot': jackpot, 'Price': cfg['price'], 'Payback': payback})
+                    curr_ev = (jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
+                    curr_pb = (curr_ev / cfg['price']) * 100
+                    
+                    start_jackpot = STARTING_JACKPOTS.get(name, 0)
+                    base_ev = (start_jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
+                    base_pb = (base_ev / cfg['price']) * 100
+                    
+                    results.append({
+                        'Name': name, 
+                        'Jackpot': jackpot, 
+                        'Price': cfg['price'], 
+                        'CurPB': curr_pb,
+                        'BasePB': base_pb
+                    })
     
-    return pd.DataFrame(results).sort_values('Payback', ascending=False)
+    return pd.DataFrame(results).sort_values('CurPB', ascending=False)
 
 # --- HTML GENERATOR ---
 def generate_html(scratchers, draw_games):
@@ -181,44 +225,62 @@ def generate_html(scratchers, draw_games):
     <html>
     <head>
         <title>Lottery Dashboard</title>
+        <meta name="robots" content="noindex, nofollow">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {{ font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f4f4f9; }}
-            h1 {{ text-align: center; color: #333; }}
+            body {{ font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 10px; background: #f4f4f9; }}
+            h1 {{ text-align: center; color: #333; font-size: 1.5em; }}
             .btn-refresh {{ 
                 display: block; width: 200px; margin: 0 auto 20px auto; 
                 padding: 10px; background-color: #007bff; color: white; 
                 text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;
             }}
-            .btn-refresh:hover {{ background-color: #0056b3; }}
-            .card {{ background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }}
-            table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-            th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }}
-            th {{ background-color: #007bff; color: white; }}
+            .card {{ background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; overflow-x: auto; }}
+            
+            table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+            th, td {{ padding: 6px 4px; text-align: center; border-bottom: 1px solid #ddd; }}
+            td:first-child {{ text-align: left; }} 
+            
+            th {{ background-color: #007bff; color: white; vertical-align: bottom; font-size: 12px; }}
             tr:nth-child(even) {{ background-color: #f9f9f9; }}
-            .hot {{ color: green; font-weight: bold; }}
+            
+            .hot-row {{ background-color: #e6fffa !important; }}
+            .hot-val {{ color: green; font-weight: bold; }}
             .timestamp {{ text-align: center; color: #666; font-size: 0.8em; margin-bottom: 20px; }}
         </style>
     </head>
     <body>
-        <h1>🎱 Nick's Lottery Tracker</h1>
-        <p class="timestamp">Last Updated: {datetime.now().strftime('%Y-%m-%d %I:%M %p PST')}</p>
+        <h1>🎱 Lottery Tracker</h1>
+        <p class="timestamp">Updated: {datetime.now().strftime('%m/%d %I:%M %p')}</p>
         
         <a href="{REFRESH_URL}" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
 
         <div class="card">
-            <h2>🏆 Best Draw Games</h2>
+            <h2>🏆 Draw Games</h2>
             <table>
-                <tr><th>Game</th><th>Jackpot (Cash)</th><th>Payback %</th></tr>
-                {''.join(f"<tr><td>{r['Name']}</td><td>${r['Jackpot']:,.0f}</td><td class='hot'>{r['Payback']:.1f}%</td></tr>" for _, r in draw_games.iterrows())}
+                <tr>
+                    <th style="text-align:left">Game</th>
+                    <th>Jackpot<br>(Cash)</th>
+                    <th>Base<br>PB%</th>
+                    <th>Cur.<br>PB%</th>
+                </tr>
+                {''.join(f"<tr><td style='text-align:left'>{r['Name']}</td><td>${format_short_money(r['Jackpot'])}</td><td>{r['BasePB']:.0f}%</td><td class='hot-val'>{r['CurPB']:.0f}%</td></tr>" for _, r in draw_games.iterrows())}
             </table>
         </div>
 
         <div class="card">
-            <h2>🔥 Top 10 Hot Scratchers</h2>
+            <h2>🔥 Scratchers</h2>
             <table>
-                <tr><th>Game</th><th>Price</th><th>Top Prize</th><th>Jackpots Left</th><th>Payback %</th></tr>
-                {''.join(f"<tr><td>{r['Name']}</td><td>${r['Price']:.0f}</td><td>{r['TopPrize']}</td><td>{r['JackpotStatus']}</td><td class='hot'>{r['Payback']:.1f}%</td></tr>" for _, r in scratchers.head(10).iterrows())}
+                <tr>
+                    <th style="text-align:left">Game</th>
+                    <th>$</th>
+                    <th>Top</th>
+                    <th>Rem.</th>
+                    <th>Base<br>PB%</th>
+                    <th>Cur.<br>PB%</th>
+                    <th>Delta</th>
+                </tr>
+                {generate_scratcher_rows(scratchers)}
             </table>
         </div>
     </body>
@@ -226,6 +288,27 @@ def generate_html(scratchers, draw_games):
     """
     with open("index.html", "w", encoding='utf-8') as f:
         f.write(html)
+
+def generate_scratcher_rows(df):
+    rows = ""
+    for _, r in df.head(20).iterrows():
+        is_hot = r['Delta'] >= HOT_THRESHOLD
+        row_class = "class='hot-row'" if is_hot else ""
+        delta_color = "green" if r['Delta'] > 0 else "red"
+        delta_str = f"{r['Delta']:+.1f}"
+        
+        rows += f"""
+        <tr {row_class}>
+            <td style='text-align:left; max-width: 120px;'>{r['Name']}</td>
+            <td>{int(r['Price'])}</td>
+            <td>{r['TopPrize']}</td>
+            <td>{r['Remain']}</td>
+            <td>{r['BasePB']:.1f}%</td>
+            <td>{r['CurPB']:.1f}%</td>
+            <td style='color:{delta_color}; font-weight:bold;'>{delta_str}</td>
+        </tr>
+        """
+    return rows
 
 def main():
     driver = setup_driver()
