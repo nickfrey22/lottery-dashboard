@@ -20,6 +20,7 @@ DRAW_GAMES_URL = "https://www.calottery.com/draw-games"
 REFRESH_URL = "https://github.com/nickfrey22/lottery-dashboard/actions/workflows/daily_schedule.yml"
 CACHE_FILE = "lottery_cache.json"
 CACHE_HOURS = 4  # How many hours to keep data before scraping again
+HISTORY_DAYS = 14  # Number of daily snapshots to retain for trend tracking
 
 # THRESHOLDS
 HOT_THRESHOLD = 3.0      
@@ -83,33 +84,63 @@ def setup_driver():
 # --- CACHE LOGIC ---
 def load_cache():
     if not os.path.exists(CACHE_FILE):
-        return None, None, None
-    
+        return None, None, None, []
+
     try:
         with open(CACHE_FILE, 'r') as f:
             data = json.load(f)
-            
-        timestamp = data.get('timestamp', 0)
-        # Check if cache is fresh
+
+        # Backward compatibility: migrate legacy flat format to history array
+        if 'history' not in data:
+            history = [{
+                'timestamp': data.get('timestamp', 0),
+                'scratchers': data.get('scratchers', []),
+                'draw_games': data.get('draw_games', [])
+            }]
+        else:
+            history = data['history']
+
+        if not history:
+            return None, None, None, []
+
+        latest = history[-1]
+        timestamp = latest.get('timestamp', 0)
+
         if (time.time() - timestamp) < (CACHE_HOURS * 3600):
             print(f"✅ Loading data from cache ({datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')})")
-            return pd.DataFrame(data['scratchers']), pd.DataFrame(data['draw_games']), timestamp
+            return pd.DataFrame(latest['scratchers']), pd.DataFrame(latest['draw_games']), timestamp, history
         else:
             print("⚠️ Cache expired. Scraping new data...")
-            return None, None, None
+            return None, None, None, history
+
     except Exception as e:
         print(f"Cache read error: {e}")
-        return None, None, None
+        return None, None, None, []
 
-def save_cache(scratch_df, draw_df):
-    data = {
+def save_cache(scratch_df, draw_df, history):
+    new_entry = {
         'timestamp': time.time(),
         'scratchers': scratch_df.to_dict('records'),
         'draw_games': draw_df.to_dict('records')
     }
+    history.append(new_entry)
+    history = history[-HISTORY_DAYS:]
     with open(CACHE_FILE, 'w') as f:
-        json.dump(data, f)
-    print("💾 Data cached successfully.")
+        json.dump({'history': history}, f)
+    print(f"💾 Data cached successfully. ({len(history)} snapshots stored)")
+    return history
+
+def calculate_trends(scratch_df, history):
+    """Returns {game_name: 7-day CurPB% change} for each game. None if no reference data."""
+    if len(history) < 2:
+        return {}
+    ref_index = -8 if len(history) >= 8 else 0
+    ref_lookup = {g['Name']: g['CurPB'] for g in history[ref_index].get('scratchers', [])}
+    trends = {}
+    for _, row in scratch_df.iterrows():
+        name = row['Name']
+        trends[name] = row['CurPB'] - ref_lookup[name] if name in ref_lookup else None
+    return trends
 
 # --- SCRAPER FUNCTIONS ---
 def get_scratcher_data(driver):
@@ -290,7 +321,7 @@ def send_alert_email(hot_games):
         print(f"❌ Failed to send email: {e}")
 
 # --- HTML GENERATOR ---
-def generate_html(scratchers, draw_games, timestamp):
+def generate_html(scratchers, draw_games, timestamp, trends):
     tz = pytz.timezone('America/Los_Angeles')
     dt_object = datetime.fromtimestamp(timestamp, tz)
     time_str = dt_object.strftime('%m/%d %I:%M %p')
@@ -365,6 +396,7 @@ def generate_html(scratchers, draw_games, timestamp):
                     <th>Base<br>PB%</th>
                     <th>Cur.<br>PB%</th>
                     <th>Delta</th>
+                    <th>7d<br>Trend</th>
                 </tr>
                 SCRATCHER_ROWS_PLACEHOLDER
             </table>
@@ -382,7 +414,7 @@ def generate_html(scratchers, draw_games, timestamp):
     for _, r in churn_df.iterrows():
         churn_rows += f"<tr><td style='text-align:left'>{r['Name']}</td><td>${int(r['Price'])}</td><td>{r['OverallOdds']:.2f}</td><td>{r['CurPB']:.0f}%</td></tr>"
 
-    scratcher_rows = generate_scratcher_rows(scratchers)
+    scratcher_rows = generate_scratcher_rows(scratchers, trends)
 
     final_html = html_template.replace("TIME_PLACEHOLDER", time_str)
     final_html = final_html.replace("REFRESH_URL_PLACEHOLDER", REFRESH_URL)
@@ -393,7 +425,7 @@ def generate_html(scratchers, draw_games, timestamp):
     with open("index.html", "w", encoding='utf-8') as f:
         f.write(final_html)
 
-def generate_scratcher_rows(df):
+def generate_scratcher_rows(df, trends):
     rows = ""
     for _, r in df.head(20).iterrows():
         is_hot = r['Delta'] >= HOT_THRESHOLD
@@ -401,6 +433,13 @@ def generate_scratcher_rows(df):
         delta_color = "green" if r['Delta'] > 0 else "red"
         delta_str = f"{r['Delta']:+.1f}"
         
+        trend_val = trends.get(r['Name']) if trends else None
+        if trend_val is None:
+            trend_td = "<td style='color:#aaa;'>—</td>"
+        else:
+            trend_color = "green" if trend_val > 0 else "red"
+            trend_td = f"<td style='color:{trend_color}; font-weight:bold;'>{trend_val:+.1f}</td>"
+
         rows += f"""
         <tr {row_class}>
             <td style='text-align:left; max-width: 120px;'>{r['Name']}</td>
@@ -410,13 +449,14 @@ def generate_scratcher_rows(df):
             <td>{r['BasePB']:.1f}%</td>
             <td>{r['CurPB']:.1f}%</td>
             <td style='color:{delta_color}; font-weight:bold;'>{delta_str}</td>
+            {trend_td}
         </tr>
         """
     return rows
 
 def main():
     # 1. Try to load cache
-    scratch_df, draw_df, timestamp = load_cache()
+    scratch_df, draw_df, timestamp, history = load_cache()
     
     # 2. If no cache, scrape
     if scratch_df is None:
@@ -424,13 +464,14 @@ def main():
         try:
             draw_df = get_draw_data(driver)
             scratch_df = get_scratcher_data(driver)
-            save_cache(scratch_df, draw_df)
+            history = save_cache(scratch_df, draw_df, history)
             timestamp = time.time()
         finally:
             driver.quit()
     
-    # 3. Generate HTML
-    generate_html(scratch_df, draw_df, timestamp)
+    # 3. Calculate trends and generate HTML
+    trends = calculate_trends(scratch_df, history)
+    generate_html(scratch_df, draw_df, timestamp, trends)
     print("Dashboard generated.")
     
     # 4. Email Alert (Only if fresh scrape)
