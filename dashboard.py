@@ -321,6 +321,30 @@ def send_alert_email(hot_games):
         print(f"❌ Failed to send email: {e}")
 
 # --- HTML GENERATOR ---
+def calculate_buy_score(df):
+    """Composite 0-100 buy score: 50% CurPB, 30% Delta, 20% top-prize remaining ratio."""
+    result = df.copy()
+
+    def parse_top_ratio(remain_str):
+        try:
+            rem, orig = remain_str.split('/')
+            return float(rem) / float(orig)
+        except:
+            return 0.5
+
+    result['_TopRatio'] = result['Remain'].apply(parse_top_ratio)
+
+    def norm(series, lo, hi):
+        return ((series - lo) / (hi - lo) * 100).clip(0, 100)
+
+    result['BuyScore'] = (
+        0.50 * norm(result['CurPB'], 50, 95) +
+        0.30 * norm(result['Delta'], -10, 15) +
+        0.20 * (result['_TopRatio'] * 100)
+    ).round(0).astype(int)
+
+    return result.drop(columns=['_TopRatio']).sort_values('BuyScore', ascending=False)
+
 def generate_html(scratchers, draw_games, timestamp, trends):
     tz = pytz.timezone('America/Los_Angeles')
     dt_object = datetime.fromtimestamp(timestamp, tz)
@@ -390,6 +414,7 @@ def generate_html(scratchers, draw_games, timestamp, trends):
             <table>
                 <tr>
                     <th style="text-align:left">Game</th>
+                    <th>Score</th>
                     <th>$</th>
                     <th>Top</th>
                     <th>Rem.</th>
@@ -414,7 +439,8 @@ def generate_html(scratchers, draw_games, timestamp, trends):
     for _, r in churn_df.iterrows():
         churn_rows += f"<tr><td style='text-align:left'>{r['Name']}</td><td>${int(r['Price'])}</td><td>{r['OverallOdds']:.2f}</td><td>{r['CurPB']:.0f}%</td></tr>"
 
-    scratcher_rows = generate_scratcher_rows(scratchers, trends)
+    scored_scratchers = calculate_buy_score(scratchers)
+    scratcher_rows = generate_scratcher_rows(scored_scratchers, trends)
 
     final_html = html_template.replace("TIME_PLACEHOLDER", time_str)
     final_html = final_html.replace("REFRESH_URL_PLACEHOLDER", REFRESH_URL)
@@ -440,9 +466,18 @@ def generate_scratcher_rows(df, trends):
             trend_color = "green" if trend_val > 0 else "red"
             trend_td = f"<td style='color:{trend_color}; font-weight:bold;'>{trend_val:+.1f}</td>"
 
+        score = r.get('BuyScore', 0)
+        if score >= 70:
+            score_td = f"<td style='color:green; font-weight:bold;'>{score}</td>"
+        elif score >= 50:
+            score_td = f"<td style='color:darkorange; font-weight:bold;'>{score}</td>"
+        else:
+            score_td = f"<td style='color:#999;'>{score}</td>"
+
         rows += f"""
         <tr {row_class}>
             <td style='text-align:left; max-width: 120px;'>{r['Name']}</td>
+            {score_td}
             <td>{int(r['Price'])}</td>
             <td>{r['TopPrize']}</td>
             <td>{r['Remain']}</td>
