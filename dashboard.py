@@ -378,7 +378,7 @@ def generate_html(scratchers, draw_games, timestamp, trends):
         </style>
     </head>
     <body>
-        <h1>🎱 Nick's Lottery Tracker</h1>
+        <h1>🎱Lottery Tracker</h1>
         <p class="timestamp">Updated: TIME_PLACEHOLDER PST</p>
         <a href="REFRESH_URL_PLACEHOLDER" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
 
