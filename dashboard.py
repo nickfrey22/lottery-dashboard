@@ -28,7 +28,7 @@ EMAIL_THRESHOLD = 3.0
 
 # Jackpot alert thresholds (full advertised jackpot, not cash value)
 JACKPOT_ALERT_THRESHOLDS = {
-    "SuperLotto Plus": 12_000_000,
+    "SuperLotto Plus": 6_000_000,
     "Mega Millions":  500_000_000,
     "Powerball":      500_000_000,
 }
