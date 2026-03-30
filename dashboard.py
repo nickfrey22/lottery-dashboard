@@ -26,11 +26,11 @@ HISTORY_DAYS = 14  # Number of daily snapshots to retain for trend tracking
 HOT_THRESHOLD = 3.0
 EMAIL_THRESHOLD = 3.0
 
-# Jackpot alert thresholds (full advertised jackpot, not cash value)
+# Jackpot alert thresholds (cash value)
 JACKPOT_ALERT_THRESHOLDS = {
-    "SuperLotto Plus": 6_000_000,
-    "Mega Millions":  500_000_000,
-    "Powerball":      500_000_000,
+    "SuperLotto Plus":  3_000_000,
+    "Mega Millions":  225_000_000,
+    "Powerball":      225_000_000,
 }
 
 # Fixed Lower-Tier Payback Estimates
@@ -50,9 +50,9 @@ STARTING_JACKPOTS = {
 }
 
 DRAW_GAME_CONFIG = {
-    "Powerball":      {"price": 2.0, "odds": 292201338, "regex": r"Estimated Cash Value\s*\$([\d,]+)", "full_regex": r"Estimated jackpot\s*\$([\d,]+)"},
-    "Mega Millions":  {"price": 5.0, "odds": 290472336, "regex": r"Estimated Cash Value\s*\$([\d,]+)", "full_regex": r"Estimated jackpot\s*\$([\d,]+)"},
-    "SuperLotto Plus":{"price": 1.0, "odds": 41416353,  "regex": r"Estimated Cash Value\s*\$([\d,]+)", "full_regex": r"Estimated jackpot\s*\$([\d,]+)"},
+    "Powerball":      {"price": 2.0, "odds": 292201338, "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
+    "Mega Millions":  {"price": 5.0, "odds": 290472336, "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
+    "SuperLotto Plus":{"price": 1.0, "odds": 41416353,  "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
     "Fantasy 5":      {"price": 1.0, "odds": 575757,    "regex": r"\$([\d,]+)\*"},
 }
 
@@ -273,13 +273,6 @@ def get_draw_data(driver):
                         bk = re.search(r"\$([\d,]+)", text[indices[i]:indices[i+1]])
                         jackpot = clean_money(bk.group(1)) if bk else 0
                     else: jackpot = 0
-                
-                # Scrape full (annuity) jackpot if regex defined
-                full_jackpot = 0
-                if 'full_regex' in cfg:
-                    full_match = re.search(cfg['full_regex'], block, re.IGNORECASE)
-                    if full_match:
-                        full_jackpot = clean_money(full_match.group(1))
 
                 if jackpot > 1000:
                     curr_ev = (jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
@@ -292,7 +285,6 @@ def get_draw_data(driver):
                     results.append({
                         'Name': name,
                         'Jackpot': jackpot,
-                        'FullJackpot': full_jackpot,
                         'Price': cfg['price'],
                         'CurPB': curr_pb,
                         'BasePB': base_pb
@@ -351,11 +343,9 @@ def send_jackpot_alert_email(triggered_games):
     body = "The following jackpots have reached your alert threshold:\n\n"
     for _, row in triggered_games.iterrows():
         threshold = JACKPOT_ALERT_THRESHOLDS.get(row['Name'], 0)
-        full = row.get('FullJackpot', 0)
-        body += f"GAME:      {row['Name']}\n"
-        body += f"JACKPOT:   ${full:,.0f}\n"
-        body += f"THRESHOLD: ${threshold:,.0f}\n"
+        body += f"GAME:       {row['Name']}\n"
         body += f"CASH VALUE: ${row['Jackpot']:,.0f}\n"
+        body += f"THRESHOLD:  ${threshold:,.0f}\n"
         body += "-" * 30 + "\n"
 
     body += f"\nCheck Dashboard: https://nickfrey22.github.io/lottery-dashboard/"
@@ -429,7 +419,7 @@ def generate_html(scratchers, draw_games, timestamp, trends):
         </style>
     </head>
     <body>
-        <h1>🎱Lottery Tracker</h1>
+        <h1>🎱 Lottery Tracker</h1>
         <p class="timestamp">Updated: TIME_PLACEHOLDER PST</p>
         <a href="REFRESH_URL_PLACEHOLDER" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
 
@@ -570,16 +560,15 @@ def main():
         send_alert_email(hot_games)
 
     # Jackpot threshold alerts
-    if 'FullJackpot' in draw_df.columns:
-        jackpot_hits = draw_df[
-            draw_df.apply(
-                lambda r: r['FullJackpot'] >= JACKPOT_ALERT_THRESHOLDS.get(r['Name'], float('inf')),
-                axis=1
-            )
-        ]
-        if not jackpot_hits.empty:
-            print(f"Found {len(jackpot_hits)} jackpot threshold hit(s). Sending email...")
-            send_jackpot_alert_email(jackpot_hits)
+    jackpot_hits = draw_df[
+        draw_df.apply(
+            lambda r: r['Jackpot'] >= JACKPOT_ALERT_THRESHOLDS.get(r['Name'], float('inf')),
+            axis=1
+        )
+    ]
+    if not jackpot_hits.empty:
+        print(f"Found {len(jackpot_hits)} jackpot threshold hit(s). Sending email...")
+        send_jackpot_alert_email(jackpot_hits)
 
 if __name__ == "__main__":
     main()
