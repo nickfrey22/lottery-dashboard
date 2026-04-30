@@ -568,7 +568,7 @@ def main():
             axis=1
         )
     ]
-        if not jackpot_hits.empty:
+    if not jackpot_hits.empty:
         print(f"Found {len(jackpot_hits)} jackpot threshold hit(s). Sending email...")
         send_jackpot_alert_email(jackpot_hits)
 
