@@ -50,10 +50,10 @@ STARTING_JACKPOTS = {
 }
 
 DRAW_GAME_CONFIG = {
-    "Powerball":      {"price": 2.0, "odds": 292201338, "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
-    "Mega Millions":  {"price": 5.0, "odds": 290472336, "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
-    "SuperLotto Plus":{"price": 1.0, "odds": 41416353,  "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
-    "Fantasy 5":      {"price": 1.0, "odds": 575757,    "regex": r"\$([\d,]+)\*"},
+    "Powerball":      {"price": 2.0, "odds": 292201338, "url": "https://www.calottery.com/draw-games/powerball",       "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
+    "Mega Millions":  {"price": 5.0, "odds": 290472336, "url": "https://www.calottery.com/draw-games/mega-millions",   "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
+    "SuperLotto Plus":{"price": 1.0, "odds": 41416353,  "url": "https://www.calottery.com/draw-games/superlotto-plus","regex": r"Estimated Cash Value\s*\$([\d,]+)"},
+    "Fantasy 5":      {"price": 1.0, "odds": 575757,    "url": "https://www.calottery.com/draw-games/fantasy-5",      "regex": r"\$([\d,]+)\*"},
 }
 
 def clean_money(val, ticket_price=0):
@@ -246,51 +246,53 @@ def get_scratcher_data(driver):
         except Exception as e:
             continue
             
-    return pd.DataFrame(game_data).sort_values('CurPB', ascending=False)
+    df = pd.DataFrame(game_data)
+    if df.empty:
+        return df
+    return df.sort_values('CurPB', ascending=False)
 
 def get_draw_data(driver):
     print("Scraping Draw Games...")
     driver.get(DRAW_GAMES_URL)
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(3)
-    
-    text = driver.find_element(By.TAG_NAME, "body").text
-    marker = "Game Card"
-    indices = [m.start() for m in re.finditer(marker, text)]
-    indices.append(len(text))
-    
     results = []
-    
-    for i in range(len(indices) - 1):
-        block = text[indices[i]-50 : indices[i+1]]
-        for name, cfg in DRAW_GAME_CONFIG.items():
-            if name.upper() in text[indices[i]-50 : indices[i]].upper():
-                match = re.search(cfg['regex'], block)
-                if match:
-                    jackpot = clean_money(match.group(1))
-                else:
-                    if name == "Fantasy 5":
-                        bk = re.search(r"\$([\d,]+)", text[indices[i]:indices[i+1]])
-                        jackpot = clean_money(bk.group(1)) if bk else 0
-                    else: jackpot = 0
-                
-                if jackpot > 1000:
-                    curr_ev = (jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
-                    curr_pb = (curr_ev / cfg['price']) * 100
 
-                    start_jackpot = STARTING_JACKPOTS.get(name, 0)
-                    base_ev = (start_jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
-                    base_pb = (base_ev / cfg['price']) * 100
+    for name, cfg in DRAW_GAME_CONFIG.items():
+        try:
+            driver.get(cfg['url'])
+            time.sleep(3)
+            text = driver.find_element(By.TAG_NAME, "body").text
 
-                    results.append({
-                        'Name': name,
-                        'Jackpot': jackpot,
-                        'Price': cfg['price'],
-                        'CurPB': curr_pb,
-                        'BasePB': base_pb
-                    })
-    
-    return pd.DataFrame(results).sort_values('CurPB', ascending=False)
+            match = re.search(cfg['regex'], text)
+            if match:
+                jackpot = clean_money(match.group(1))
+            else:
+                bk = re.search(r"\$([\d,]+)", text)
+                jackpot = clean_money(bk.group(1)) if bk else 0
+
+            if jackpot > 1000:
+                curr_ev = (jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
+                curr_pb = (curr_ev / cfg['price']) * 100
+
+                start_jackpot = STARTING_JACKPOTS.get(name, 0)
+                base_ev = (start_jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
+                base_pb = (base_ev / cfg['price']) * 100
+
+                results.append({
+                    'Name': name,
+                    'Jackpot': jackpot,
+                    'Price': cfg['price'],
+                    'CurPB': curr_pb,
+                    'BasePB': base_pb
+                })
+                print(f"  {name}: ${jackpot:,.0f} cash")
+        except Exception as e:
+            print(f"  Warning: could not scrape {name}: {e}")
+            continue
+
+    df = pd.DataFrame(results)
+    if df.empty:
+        return df
+    return df.sort_values('CurPB', ascending=False)
 
 # --- EMAIL ---
 def send_alert_email(hot_games):
