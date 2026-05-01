@@ -28,7 +28,7 @@ EMAIL_THRESHOLD = 3.0
 
 # Jackpot alert thresholds (cash value)
 JACKPOT_ALERT_THRESHOLDS = {
-    "SuperLotto Plus":  6_000_000,
+    "SuperLotto Plus":  3_000_000,
     "Mega Millions":  225_000_000,
     "Powerball":      225_000_000,
 }
@@ -50,10 +50,10 @@ STARTING_JACKPOTS = {
 }
 
 DRAW_GAME_CONFIG = {
-    "Powerball":      {"price": 2.0, "odds": 292201338, "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
-    "Mega Millions":  {"price": 5.0, "odds": 290472336, "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
-    "SuperLotto Plus":{"price": 1.0, "odds": 41416353,  "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
-    "Fantasy 5":      {"price": 1.0, "odds": 575757,    "regex": r"\$([\d,]+)\*"},
+    "Powerball":      {"price": 2.0, "odds": 292201338, "url": "https://www.calottery.com/draw-games/powerball",       "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
+    "Mega Millions":  {"price": 5.0, "odds": 290472336, "url": "https://www.calottery.com/draw-games/mega-millions",   "regex": r"Estimated Cash Value\s*\$([\d,]+)"},
+    "SuperLotto Plus":{"price": 1.0, "odds": 41416353,  "url": "https://www.calottery.com/draw-games/superlotto-plus","regex": r"Estimated Cash Value\s*\$([\d,]+)"},
+    "Fantasy 5":      {"price": 1.0, "odds": 575757,    "url": "https://www.calottery.com/draw-games/fantasy-5",      "regex": r"\$([\d,]+)\*"},
 }
 
 def clean_money(val, ticket_price=0):
@@ -184,9 +184,16 @@ def get_scratcher_data(driver):
             body = driver.find_element(By.TAG_NAME, "body").text
             
             price = 0
-            if "Price: $" in body:
-                price = float(body.split("Price: $")[1].split()[0].strip())
-            
+            price_match = re.search(r'price\s*[:\-]?\s*\$\s*(\d+)', body, re.IGNORECASE)
+            if price_match:
+                price = float(price_match.group(1))
+            if price <= 0:
+                url_price = re.search(r'/scratchers/\$(\d+)-', link)
+                if url_price:
+                    price = float(url_price.group(1))
+            if price <= 0:
+                continue
+
             overall_odds = 0
             odds_match = re.search(r"Overall odds\s*:\s*1\s*in\s*([\d\.]+)", body, re.IGNORECASE)
             if odds_match: overall_odds = float(odds_match.group(1))
@@ -244,53 +251,61 @@ def get_scratcher_data(driver):
             })
             
         except Exception as e:
+            print(f"  Skipping scratcher: {e}")
             continue
-            
-    return pd.DataFrame(game_data).sort_values('CurPB', ascending=False)
+
+    df = pd.DataFrame(game_data)
+    if df.empty:
+        return df
+    return df.sort_values('CurPB', ascending=False)
 
 def get_draw_data(driver):
     print("Scraping Draw Games...")
-    driver.get(DRAW_GAMES_URL)
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(3)
-    
-    text = driver.find_element(By.TAG_NAME, "body").text
-    marker = "Game Card"
-    indices = [m.start() for m in re.finditer(marker, text)]
-    indices.append(len(text))
-    
     results = []
-    
-    for i in range(len(indices) - 1):
-        block = text[indices[i]-50 : indices[i+1]]
-        for name, cfg in DRAW_GAME_CONFIG.items():
-            if name.upper() in text[indices[i]-50 : indices[i]].upper():
-                match = re.search(cfg['regex'], block)
-                if match:
-                    jackpot = clean_money(match.group(1))
-                else:
-                    if name == "Fantasy 5":
-                        bk = re.search(r"\$([\d,]+)", text[indices[i]:indices[i+1]])
-                        jackpot = clean_money(bk.group(1)) if bk else 0
-                    else: jackpot = 0
 
-                if jackpot > 1000:
-                    curr_ev = (jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
-                    curr_pb = (curr_ev / cfg['price']) * 100
+    for name, cfg in DRAW_GAME_CONFIG.items():
+        try:
+            driver.get(cfg['url'])
+            time.sleep(3)
+            text = driver.find_element(By.TAG_NAME, "body").text
 
-                    start_jackpot = STARTING_JACKPOTS.get(name, 0)
-                    base_ev = (start_jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
-                    base_pb = (base_ev / cfg['price']) * 100
+            match = re.search(cfg['regex'], text, re.IGNORECASE)
+            if match:
+                jackpot = clean_money(match.group(1))
+            else:
+                jackpot = 0
+                for amt in re.findall(r'\$([\d,]+)', text):
+                    val = clean_money(amt)
+                    if val > 10_000:
+                        jackpot = val
+                        break
 
-                    results.append({
-                        'Name': name,
-                        'Jackpot': jackpot,
-                        'Price': cfg['price'],
-                        'CurPB': curr_pb,
-                        'BasePB': base_pb
-                    })
-    
-    return pd.DataFrame(results).sort_values('CurPB', ascending=False)
+            if jackpot > 1000:
+                curr_ev = (jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
+                curr_pb = (curr_ev / cfg['price']) * 100
+
+                start_jackpot = STARTING_JACKPOTS.get(name, 0)
+                base_ev = (start_jackpot / cfg['odds']) + (cfg['price'] * FIXED_LOWER_TIER_PAYBACK.get(name, 0.2))
+                base_pb = (base_ev / cfg['price']) * 100
+
+                results.append({
+                    'Name': name,
+                    'Jackpot': jackpot,
+                    'Price': cfg['price'],
+                    'CurPB': curr_pb,
+                    'BasePB': base_pb
+                })
+                print(f"  {name}: ${jackpot:,.0f} cash")
+            else:
+                print(f"  Warning: {name} jackpot={jackpot} below threshold, skipping")
+        except Exception as e:
+            print(f"  Warning: could not scrape {name}: {e}")
+            continue
+
+    df = pd.DataFrame(results)
+    if df.empty:
+        return df
+    return df.sort_values('CurPB', ascending=False)
 
 # --- EMAIL ---
 def send_alert_email(hot_games):
@@ -419,7 +434,7 @@ def generate_html(scratchers, draw_games, timestamp, trends):
         </style>
     </head>
     <body>
-        <h1>🎱 Lottery Tracker</h1>
+        <h1>🎱 Nick's Lottery Tracker</h1>
         <p class="timestamp">Updated: TIME_PLACEHOLDER PST</p>
         <a href="REFRESH_URL_PLACEHOLDER" target="_blank" class="btn-refresh">🔄 Force Refresh</a>
 
@@ -475,13 +490,16 @@ def generate_html(scratchers, draw_games, timestamp, trends):
     for _, r in draw_games.iterrows():
         draw_rows += f"<tr><td style='text-align:left'>{r['Name']}</td><td>${format_short_money(r['Jackpot'])}</td><td>{r['BasePB']:.0f}%</td><td class='hot-val'>{r['CurPB']:.0f}%</td></tr>"
 
-    churn_df = scratchers[scratchers['Price'] <= 10].sort_values('OverallOdds', ascending=True).head(5)
-    churn_rows = ""
-    for _, r in churn_df.iterrows():
-        churn_rows += f"<tr><td style='text-align:left'>{r['Name']}</td><td>${int(r['Price'])}</td><td>{r['OverallOdds']:.2f}</td><td>{r['CurPB']:.0f}%</td></tr>"
-
-    scored_scratchers = calculate_buy_score(scratchers)
-    scratcher_rows = generate_scratcher_rows(scored_scratchers, trends)
+    if not scratchers.empty and 'Price' in scratchers.columns:
+        churn_df = scratchers[scratchers['Price'] <= 10].sort_values('OverallOdds', ascending=True).head(5)
+        churn_rows = ""
+        for _, r in churn_df.iterrows():
+            churn_rows += f"<tr><td style='text-align:left'>{r['Name']}</td><td>${int(r['Price'])}</td><td>{r['OverallOdds']:.2f}</td><td>{r['CurPB']:.0f}%</td></tr>"
+        scored_scratchers = calculate_buy_score(scratchers)
+        scratcher_rows = generate_scratcher_rows(scored_scratchers, trends)
+    else:
+        churn_rows = "<tr><td colspan='4' style='color:#999;'>No scratcher data available</td></tr>"
+        scratcher_rows = "<tr><td colspan='9' style='color:#999;'>No scratcher data available</td></tr>"
 
     final_html = html_template.replace("TIME_PLACEHOLDER", time_str)
     final_html = final_html.replace("REFRESH_URL_PLACEHOLDER", REFRESH_URL)
@@ -551,24 +569,26 @@ def main():
     print("Dashboard generated.")
     
     # 4. Email Alerts
-    hot_games = scratch_df[
-        (scratch_df['Delta'] >= EMAIL_THRESHOLD) &
-        (scratch_df['Price'] >= 20.0)
-    ]
-    if not hot_games.empty:
-        print(f"Found {len(hot_games)} hot games. Sending email...")
-        send_alert_email(hot_games)
+    if not scratch_df.empty and 'Delta' in scratch_df.columns:
+        hot_games = scratch_df[
+            (scratch_df['Delta'] >= EMAIL_THRESHOLD) &
+            (scratch_df['Price'] >= 20.0)
+        ]
+        if not hot_games.empty:
+            print(f"Found {len(hot_games)} hot games. Sending email...")
+            send_alert_email(hot_games)
 
     # Jackpot threshold alerts
-    jackpot_hits = draw_df[
-        draw_df.apply(
-            lambda r: r['Jackpot'] >= JACKPOT_ALERT_THRESHOLDS.get(r['Name'], float('inf')),
-            axis=1
-        )
-    ]
-    if not jackpot_hits.empty:
-        print(f"Found {len(jackpot_hits)} jackpot threshold hit(s). Sending email...")
-        send_jackpot_alert_email(jackpot_hits)
+    if not draw_df.empty and 'Jackpot' in draw_df.columns:
+        jackpot_hits = draw_df[
+            draw_df.apply(
+                lambda r: r['Jackpot'] >= JACKPOT_ALERT_THRESHOLDS.get(r['Name'], float('inf')),
+                axis=1
+            )
+        ]
+        if not jackpot_hits.empty:
+            print(f"Found {len(jackpot_hits)} jackpot threshold hit(s). Sending email...")
+            send_jackpot_alert_email(jackpot_hits)
 
 if __name__ == "__main__":
     main()
